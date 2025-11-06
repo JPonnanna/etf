@@ -1,81 +1,73 @@
 import streamlit as st
 import pandas as pd
-import requests
 import time
+import random
+import json
+import cloudscraper
 
 st.set_page_config(page_title="Gold ETFs — LTP vs iNAV", layout="wide")
 
-# ✅ Correct NSE symbols (trimmed to widely-traded ones)
-GOLD_ETF_TICKERS = [
-    "GOLDBEES",      # Nippon India ETF Gold BeES
-    "SETFGOLD",      # SBI Gold ETF
-    "KOTAKGOLD",     # Kotak Gold ETF
-    "ICICIGOLD",     # ICICI Prudential Gold ETF
-    "HDFCMFGETF",    # HDFC Gold ETF
-    "GOLDSHARE",     # UTI Gold ETF
-    "BSLGOLDETF",    # Aditya Birla Sun Life Gold ETF
-    "AXISGOLD",      # Axis Gold ETF
-    "DSPGOLDETF",    # DSP Gold ETF
-    "QGOLDHALF",     # Quantum Gold ETF
-    "LICMFGOLD",     # LIC MF Gold ETF
-    "IVZINGOLD",     # Invesco India Gold ETF
-    "UNIONGOLD",     # Union Gold ETF
-    "TATAGOLD",      # Tata Gold ETF
-    "EGOLD",         # Edelweiss Gold ETF
+TICKERS = [
+    "GOLDBEES","SETFGOLD","KOTAKGOLD","ICICIGOLD","HDFCMFGETF",
+    "GOLDSHARE","BSLGOLDETF","AXISGOLD","DSPGOLDETF","QGOLDHALF",
+    "LICMFGOLD","IVZINGOLD","UNIONGOLD","TATAGOLD","EGOLD"
 ]
 
 NSE_HOME = "https://www.nseindia.com/"
 NSE_QUOTE = "https://www.nseindia.com/api/quote-equity?symbol={symbol}"
 
+UA_LIST = [
+    # rotate a few realistic UAs
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+]
+
 def safe_float(x):
-    try:
-        return float(x)
-    except Exception:
-        return None
+    try: return float(x)
+    except: return None
 
 @st.cache_resource(show_spinner=False)
-def make_nse_session():
-    s = requests.Session()
-    # Must look like a real browser
+def make_scraper():
+    ua = random.choice(UA_LIST)
+    s = cloudscraper.create_scraper(
+        browser={"custom": ua},
+        delay=5,           # politeness delay on challenges
+    )
+    # baseline headers
     s.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/119.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": ua,
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://www.nseindia.com/",
         "Connection": "keep-alive",
     })
-    # Warm up: fetch homepage to get cookies
-    r = s.get(NSE_HOME, timeout=10)
+    # warm the cookies
+    r = s.get(NSE_HOME, timeout=12)
     r.raise_for_status()
     return s
 
-def fetch_quote(session: requests.Session, symbol: str, retries: int = 3, delay: float = 1.5):
-    """Fetch NSE equity quote JSON with retries and 403/HTML handling."""
+def fetch_quote(scraper, symbol, retries=4, base_delay=1.2):
     url = NSE_QUOTE.format(symbol=symbol)
     last_err = None
-    for attempt in range(1, retries + 1):
+    for i in range(retries):
         try:
-            resp = session.get(url, timeout=10)
-            # If we got HTML (blocked), try to re-warm and retry
-            if resp.headers.get("Content-Type", "").startswith("text/html"):
-                # Re-warm cookies
-                session.get(NSE_HOME, timeout=10)
-                time.sleep(delay)
-                raise ValueError("HTML/blocked response; rewarming cookies")
-            data = resp.json()  # will raise if not JSON
-            return data
+            resp = scraper.get(url, timeout=12)
+            # if we got HTML instead of JSON, re-warm and retry
+            if not resp.headers.get("Content-Type","").startswith("application/json"):
+                scraper.get(NSE_HOME, timeout=12)
+                time.sleep(base_delay*(i+1))
+                raise ValueError("Blocked/HTML response")
+            return resp.json()
         except Exception as e:
             last_err = e
-            time.sleep(delay * attempt)
+            # small backoff + random jitter
+            time.sleep(base_delay*(i+1) + random.uniform(0,0.6))
     raise last_err
 
-@st.cache_data(ttl=120, show_spinner=True)  # 2-minute cache
+@st.cache_data(ttl=120, show_spinner=True)
 def fetch_snapshot(symbols):
-    s = make_nse_session()
+    s = make_scraper()
     rows = []
     for sym in symbols:
         try:
@@ -101,15 +93,17 @@ def fetch_snapshot(symbols):
                 "Disc/Prem %": None,
                 "Error": str(e),
             })
+            # brief pause after an error to avoid rapid-fire blocks
+            time.sleep(0.8)
     return pd.DataFrame(rows)
 
 st.title("Gold ETFs — LTP vs iNAV (NSE)")
-st.caption("Auto-refresh every ~2 minutes · Data via NSE website JSON (unofficial)")
+st.caption("Auto-refresh ~120s • Unofficial NSE JSON via cloudscraper")
 
-# Simple page refresh (optional)
+# optional page-level refresh
 st.markdown('<meta http-equiv="refresh" content="120">', unsafe_allow_html=True)
 
-df = fetch_snapshot(GOLD_ETF_TICKERS)
+df = fetch_snapshot(TICKERS)
 st.dataframe(
     df,
     use_container_width=True,
@@ -119,8 +113,6 @@ st.dataframe(
         "Disc/Prem %": st.column_config.NumberColumn(format="%.3f"),
     }
 )
-# Show any errors compactly
-errs = df[df["Error"].notna()] if "Error" in df.columns else pd.DataFrame()
-if not errs.empty:
+if "Error" in df.columns and df["Error"].notna().any():
     with st.expander("Errors / blocked symbols"):
-        st.write(errs[["Ticker", "Error"]])
+        st.write(df[["Ticker","Error"]])
