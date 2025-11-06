@@ -43,6 +43,7 @@ def fetch_snapshot():
     for t in TICKERS:
         try:
             q = n.stock_quote(t)
+            print(q)
             pi = (q or {}).get("priceInfo", {}) or {}
             ltp = safe_float(pi.get("lastPrice"))
             inav_ok = bool(pi.get("checkINAV"))
