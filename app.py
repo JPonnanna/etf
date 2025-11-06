@@ -7,12 +7,30 @@ import cloudscraper
 
 st.set_page_config(page_title="Gold ETFs — LTP vs iNAV", layout="wide")
 
-TICKERS = [
-    "GOLDBEES","SETFGOLD","KOTAKGOLD","ICICIGOLD","HDFCMFGETF",
-    "GOLDSHARE","BSLGOLDETF","AXISGOLD","DSPGOLDETF","QGOLDHALF",
-    "LICMFGOLD","IVZINGOLD","UNIONGOLD","TATAGOLD","EGOLD"
+gold_etf_tickers = [
+    'GOLDBEES',      # Nippon India ETF Gold BeES
+    'SETFGOLD',      # SBI Gold ETF
+    'GOLD1',         # Kotak Gold ETF
+    'GOLDIETF',      # ICICI Prudential Gold ETF
+    'HDFCGOLD',      # HDFC Gold ETF
+    'GOLDSHARE',     # UTI Gold Exchange Traded Fund
+    'BSLGOLDETF',    # Aditya Birla Sun Life Gold ETF
+    'AXISGOLD',      # Axis Gold ETF
+    'GOLDETFADD',    # DSP Gold ETF
+    'QGOLDHALF',     # Quantum Gold Fund
+    'LICMFGOLD',     # LIC MF Gold ETF
+    'IVZINGOLD',     # Invesco India Gold Exchange Traded Fund
+    'GROWWGOLD',     # Groww Gold ETF
+    'GOLDETF',       # Mirae Asset Gold ETF
+    'GOLD360',       # 360 ONE Gold ETF
+    'BBNPPGOLD',     # Baroda BNP Paribas Gold ETF
+    'UNIONGOLD',     # Union Gold ETF
+    'TATAGOLD',      # Tata Gold Exchange Traded Fund
+    'EGOLD',         # Edelweiss Gold ETF
+    'AONEGOLD',      # Angel One Gold ETF
+    'GOLDCASE',      # Zerodha Gold ETF
+    'MOGSEC'         # Motilal Oswal Gold ETF
 ]
-
 NSE_HOME = "https://www.nseindia.com/"
 NSE_QUOTE = "https://www.nseindia.com/api/quote-equity?symbol={symbol}"
 
