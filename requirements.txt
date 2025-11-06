@@ -1,6 +1,5 @@
 streamlit==1.39.0
 pandas==2.2.3
-requests==2.32.3
 jugaad-data==0.26
 cloudscraper==1.2.71
 streamlit-autorefresh==1.0.0
