@@ -1,12 +1,13 @@
+# app.py
 import streamlit as st
 import pandas as pd
-from jugaad_data.nse import NSELive
-from streamlit_autorefresh import st_autorefresh
-from datetime import datetime
+import time
+import random
 
 st.set_page_config(page_title="Gold ETFs — LTP vs iNAV", layout="wide")
 
-TICKERS = [
+# Valid NSE symbols (trim/add as needed)
+TICKERS =[
     'GOLDBEES',      # Nippon India ETF Gold BeES
     'SETFGOLD',      # SBI Gold ETF
     'GOLD1',         # Kotak Gold ETF
@@ -32,41 +33,109 @@ TICKERS = [
 ]
 
 
-def safe_float(x):
-    try: return float(x)
-    except: return None
+NSE_HOME  = "https://www.nseindia.com/"
+NSE_QUOTE = "https://www.nseindia.com/api/quote-equity?symbol={symbol}"
 
-@st.cache_data(ttl=120)   # keep data “hot” for 2 min
-def fetch_snapshot():
-    n = NSELive()
-    rows = []
-    for t in TICKERS:
+UA_LIST = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+]
+
+REFRESH_SEC = 120  # soft auto-refresh cadence
+
+# ---- Soft auto-refresh without a hard page reload
+now = time.time()
+key = "next_refresh_at"
+if key not in st.session_state:
+    st.session_state[key] = now + REFRESH_SEC
+elif now >= st.session_state[key]:
+    st.session_state[key] = now + REFRESH_SEC
+    st.experimental_rerun()
+
+def safe_float(x):
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+# ---- Cloudsraper session with cookie warm-up (cached across reruns)
+@st.cache_resource(show_spinner=False)
+def make_scraper():
+    import cloudscraper
+    ua = random.choice(UA_LIST)
+    s = cloudscraper.create_scraper(browser={"custom": ua}, delay=5)
+    s.headers.update({
+        "User-Agent": ua,
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.nseindia.com/",
+        "Connection": "keep-alive",
+    })
+    r = s.get(NSE_HOME, timeout=12)
+    r.raise_for_status()
+    return s
+
+def fetch_quote(scraper, symbol, retries=4, base_delay=1.2):
+    """Fetch NSE quote JSON with re-warm and backoff if blocked."""
+    last_err = None
+    for i in range(retries):
         try:
-            q = n.stock_quote(t)
-            print(q)
+            resp = scraper.get(NSE_QUOTE.format(symbol=symbol), timeout=12)
+            ctype = resp.headers.get("Content-Type", "")
+            if not ctype.startswith("application/json"):
+                # blocked -> re-warm cookies and retry with backoff
+                scraper.get(NSE_HOME, timeout=12)
+                time.sleep(base_delay * (i + 1))
+                raise ValueError(f"Blocked/HTML ({ctype})")
+            return resp.json()
+        except Exception as e:
+            last_err = e
+            time.sleep(base_delay * (i + 1) + random.uniform(0, 0.6))
+    raise last_err
+
+# ---- Pull a full snapshot (cached for 120s so we don't hammer NSE)
+@st.cache_data(ttl=120, show_spinner=True)
+def fetch_snapshot(symbols):
+    s = make_scraper()
+    out = []
+    for sym in symbols:
+        try:
+            q  = fetch_quote(s, sym)
             pi = (q or {}).get("priceInfo", {}) or {}
             ltp = safe_float(pi.get("lastPrice"))
             inav_ok = bool(pi.get("checkINAV"))
             inav = safe_float(pi.get("iNavValue")) if inav_ok else None
             disc = (ltp - inav) / inav * 100 if (ltp is not None and inav) else None
-            rows.append({"Ticker": t, "LTP": ltp, "iNAV ok?": inav_ok,
-                         "iNAV": inav, "Disc/Prem %": None if disc is None else round(disc,3)})
+            out.append({
+                "Ticker": sym,
+                "LTP": ltp,
+                "iNAV ok?": inav_ok,
+                "iNAV": inav,
+                "Disc/Prem %": None if disc is None else round(disc, 3),
+            })
+            time.sleep(0.2)  # tiny politeness delay per symbol
         except Exception as e:
-            rows.append({"Ticker": t, "LTP": None, "iNAV ok?": False, "iNAV": None,
-                         "Disc/Prem %": None, "Error": str(e)})
-    return pd.DataFrame(rows)
+            out.append({
+                "Ticker": sym,
+                "LTP": None,
+                "iNAV ok?": False,
+                "iNAV": None,
+                "Disc/Prem %": None,
+                "Error": str(e),
+            })
+            time.sleep(0.6)
+    return pd.DataFrame(out)
 
-# 🔁 Auto-rerun every 120,000 ms without a visible hard refresh
-st_autorefresh(interval=120_000, key="etf_autorefresh")
-
+# ---- UI
 st.title("Gold ETFs — LTP vs iNAV (NSE)")
-st.caption(f"Last update: {datetime.now():%Y-%m-%d %H:%M:%S}  • auto-refresh ~120s")
+st.caption(f"Auto-update ~{REFRESH_SEC}s • Unofficial NSE website JSON via cloudscraper")
 
-# Keep layout static; only the placeholder’s content changes on reruns
-table_placeholder = st.empty()
-df = fetch_snapshot()
-table_placeholder.dataframe(
-    df, use_container_width=True,
+df = fetch_snapshot(TICKERS)
+
+st.dataframe(
+    df,
+    use_container_width=True,
     column_config={
         "LTP": st.column_config.NumberColumn(format="%.2f"),
         "iNAV": st.column_config.NumberColumn(format="%.2f"),
@@ -76,4 +145,4 @@ table_placeholder.dataframe(
 
 if "Error" in df.columns and df["Error"].notna().any():
     with st.expander("Errors / blocked symbols"):
-        st.write(df[["Ticker","Error"]])
+        st.write(df[["Ticker", "Error"]])
