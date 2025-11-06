@@ -7,7 +7,7 @@ import cloudscraper
 
 st.set_page_config(page_title="Gold ETFs — LTP vs iNAV", layout="wide")
 
-gold_etf_tickers = [
+TICKERS = [
     'GOLDBEES',      # Nippon India ETF Gold BeES
     'SETFGOLD',      # SBI Gold ETF
     'GOLD1',         # Kotak Gold ETF
